@@ -18,6 +18,35 @@ the switch.
 - `mem save --ai` can draft a session entry from your recent git activity using
   Claude, which you then confirm or edit before it is written.
 
+A project's `.memory/STATE.md` looks like this:
+
+```markdown
+---
+project: checkout-api
+status: in-progress
+last_updated: 2026-03-14T16:20
+---
+
+# checkout-api
+
+## Current focus
+Retry handling for the payment provider webhook.
+
+## Open issues / bugs
+- Idempotency key not sent on retry (intermittent duplicate charges)
+
+## Next steps / todo
+- Add integration test for the duplicate-charge path
+
+## Recent decisions
+- Keep retries in the worker, not the HTTP handler
+
+## Session log
+
+### 2026-03-14T16:20
+- Fixed retry backoff. Next: verify idempotency key is attached.
+```
+
 ## Install
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
