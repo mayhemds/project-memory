@@ -19,20 +19,31 @@ from .ai import draft_entry_with_ai
 from .durations import parse_duration
 from .exceptions import MemError
 from .git_activity import collect_git_activity
-from .models import TIMESTAMP_FORMAT, Project
+from .models import TIMESTAMP_FORMAT, Project, utc_now_iso
 from .registry import load_registry, sync_with_shared, upsert_project
 from .statefile import (
     append_session_entry,
     find_project_root,
     initialize_project,
     read_state,
+    remove_initial_state,
     state_file,
 )
 
 
 def _now_iso() -> str:
-    """Return the current local time as ``YYYY-MM-DDTHH:MM``."""
+    """Return the current local time as ``YYYY-MM-DDTHH:MM`` for state files."""
     return datetime.now().strftime(TIMESTAMP_FORMAT)
+
+
+def _display_time(project: Project) -> str:
+    """Return a project's last-touched time in the local timezone."""
+    return project.updated_at.astimezone().strftime(TIMESTAMP_FORMAT)
+
+
+def _by_recency(projects: list[Project]) -> list[Project]:
+    """Sort projects most recently touched first."""
+    return sorted(projects, key=lambda project: project.updated_at, reverse=True)
 
 
 def _require_registry() -> list[Project]:
@@ -41,6 +52,32 @@ def _require_registry() -> list[Project]:
     if not projects:
         raise MemError("No projects tracked yet. Run 'mem init' inside a project first.")
     return projects
+
+
+def _require_local_projects() -> list[Project]:
+    """Load the projects whose state file exists on this machine.
+
+    A registry shared with teammates holds entries for paths that only exist
+    on their machines. Those are hidden from per-machine views, with a note on
+    stderr saying how many, so they cannot masquerade as your own latest work.
+
+    Raises:
+        MemError: If nothing is tracked, or nothing tracked exists locally.
+    """
+    projects = _require_registry()
+    local = [project for project in projects if state_file(Path(project.path)).exists()]
+    hidden = len(projects) - len(local)
+    if not local:
+        raise MemError(
+            f"None of the {hidden} tracked project(s) exist on this machine. "
+            "Run 'mem init' inside a project first."
+        )
+    if hidden:
+        print(
+            f"({hidden} tracked project(s) not found on this machine were hidden.)",
+            file=sys.stderr,
+        )
+    return local
 
 
 def _project_for_command() -> tuple[Path, Path]:
@@ -58,7 +95,11 @@ def cmd_init(_: argparse.Namespace) -> None:
     root = Path.cwd()
     timestamp = _now_iso()
     path = initialize_project(root, timestamp)
-    upsert_project(root.name, root, timestamp)
+    try:
+        upsert_project(root.name, root, utc_now_iso())
+    except BaseException:
+        remove_initial_state(root)
+        raise
     print(f"Initialized project memory at {path}")
 
 
@@ -137,7 +178,7 @@ def cmd_save(args: argparse.Namespace) -> None:
         note = args.note or _prompt_for_note()
 
     append_session_entry(root, note, timestamp)
-    upsert_project(root.name, root, timestamp)
+    upsert_project(root.name, root, utc_now_iso())
     print(f"Saved to {path}")
 
 
@@ -156,37 +197,29 @@ def cmd_last(args: argparse.Namespace) -> None:
     point the user is scanning a period of work rather than resuming one
     session.
     """
-    projects = _require_registry()
+    window = parse_duration(args.since) if args.since is not None else None
+    projects = _by_recency(_require_local_projects())
 
-    if args.since is None:
-        latest = max(projects, key=lambda project: project.last_updated)
+    if window is None:
+        latest = projects[0]
         print(f"Most recent project: {latest.name} ({latest.path})")
-        print(f"Last touched: {latest.last_updated}\n")
-        latest_state = state_file(Path(latest.path))
-        if latest_state.exists():
-            print(latest_state.read_text(encoding="utf-8"), end="")
-        else:
-            print("(state file missing, registry may be stale)")
+        print(f"Last touched: {_display_time(latest)}\n")
+        print(read_state(Path(latest.path)), end="")
         return
 
-    window = parse_duration(args.since)
-    cutoff = datetime.now() - window
-    recent = [
-        project
-        for project in projects
-        if datetime.strptime(project.last_updated, TIMESTAMP_FORMAT) >= cutoff
-    ]
+    cutoff = datetime.now().astimezone() - window
+    recent = [project for project in projects if project.updated_at >= cutoff]
     if not recent:
         print(f"No projects touched in the last {args.since}.")
         return
-    for project in sorted(recent, key=lambda entry: entry.last_updated, reverse=True):
-        print(f"{project.last_updated}  {project.name:<25}  {project.path}")
+    for project in recent:
+        print(f"{_display_time(project)}  {project.name:<25}  {project.path}")
 
 
 def cmd_list(_: argparse.Namespace) -> None:
     """List all tracked projects, most recently touched first."""
-    for project in sorted(_require_registry(), key=lambda entry: entry.last_updated, reverse=True):
-        print(f"{project.last_updated}  {project.name:<25}  {project.path}")
+    for project in _by_recency(_require_local_projects()):
+        print(f"{_display_time(project)}  {project.name:<25}  {project.path}")
 
 
 def cmd_search(args: argparse.Namespace) -> None:
@@ -198,7 +231,7 @@ def cmd_search(args: argparse.Namespace) -> None:
     projects = _require_registry()
     keyword = args.keyword.lower()
     found_any = False
-    for project in sorted(projects, key=lambda entry: entry.last_updated, reverse=True):
+    for project in _by_recency(projects):
         path = state_file(Path(project.path))
         if not path.exists():
             continue

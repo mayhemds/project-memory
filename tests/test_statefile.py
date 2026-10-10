@@ -121,3 +121,43 @@ def test_append_session_entry_rejects_missing_timestamp_field(project_dir: Path)
 
     with pytest.raises(StateFileError, match="last_updated"):
         append_session_entry(project_dir, "note", "2026-09-18T14:00")
+
+
+def test_format_entry_body_indents_continuation_lines() -> None:
+    from project_memory.statefile import format_entry_body
+
+    body = format_entry_body("line one\nline two\n## Fake heading\n\n")
+
+    assert body == "- line one\n  line two\n  ## Fake heading"
+
+
+def test_multiline_note_stays_inside_one_list_item(project_dir: Path) -> None:
+    initialize_project(project_dir, "2026-01-01T09:00")
+
+    append_session_entry(project_dir, "first\n## Not a section", "2026-01-02T10:00")
+
+    text = state_file(project_dir).read_text(encoding="utf-8")
+    assert text.endswith("### 2026-01-02T10:00\n- first\n  ## Not a section\n")
+    assert "\n## Not a section" not in text
+
+
+def test_append_session_entry_preserves_crlf_line_endings(project_dir: Path) -> None:
+    initialize_project(project_dir, "2026-01-01T09:00")
+    path = state_file(project_dir)
+    path.write_bytes(path.read_text(encoding="utf-8").replace("\n", "\r\n").encode())
+
+    append_session_entry(project_dir, "note", "2026-01-02T10:00")
+
+    raw = path.read_bytes().decode()
+    assert "last_updated: 2026-01-02T10:00\r\n" in raw
+    assert "---\r\n\r\n# " in raw
+
+
+def test_remove_initial_state_rolls_back_init(project_dir: Path) -> None:
+    from project_memory.statefile import remove_initial_state
+
+    initialize_project(project_dir, "2026-01-01T09:00")
+
+    remove_initial_state(project_dir)
+
+    assert not (project_dir / ".memory").exists()

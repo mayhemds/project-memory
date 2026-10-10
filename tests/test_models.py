@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from project_memory.exceptions import RegistryError
-from project_memory.models import Project, parse_projects
+from project_memory.models import Project, parse_projects, parse_timestamp, utc_now_iso
 
 
 def test_project_accepts_valid_entry() -> None:
@@ -77,3 +78,23 @@ def test_parse_projects_rejects_malformed_entry() -> None:
 def test_parse_projects_rejects_entry_of_wrong_type() -> None:
     with pytest.raises(RegistryError):
         parse_projects(["not-an-object"], source=Path("registry.json"))
+
+
+def test_project_accepts_utc_timestamp() -> None:
+    project = Project(name="a", path="/tmp/a", last_updated="2026-01-01T12:30Z")
+
+    assert project.updated_at.utcoffset() is not None
+    assert project.updated_at.astimezone(UTC).strftime("%H:%M") == "12:30"
+
+
+def test_legacy_naive_timestamp_is_read_as_local_time() -> None:
+    project = Project(name="a", path="/tmp/a", last_updated="2026-01-01T12:30")
+
+    assert project.updated_at.replace(tzinfo=None) == datetime(2026, 1, 1, 12, 30)
+
+
+def test_utc_now_iso_round_trips() -> None:
+    stamp = utc_now_iso()
+
+    assert stamp.endswith("Z")
+    assert parse_timestamp(stamp).tzinfo is not None

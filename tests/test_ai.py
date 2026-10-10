@@ -18,10 +18,10 @@ from project_memory.config import AISettings
 from project_memory.exceptions import AIError
 
 
-def _fake_response(*texts: str) -> Any:
+def _fake_response(*texts: str, stop_reason: str = "end_turn") -> Any:
     """Build an object shaped like an Anthropic Messages response."""
     blocks = [SimpleNamespace(type="text", text=text) for text in texts]
-    return SimpleNamespace(content=blocks)
+    return SimpleNamespace(content=blocks, stop_reason=stop_reason)
 
 
 def _install_fake_client(
@@ -158,3 +158,20 @@ def test_load_prompt_raises_for_missing_template(monkeypatch: pytest.MonkeyPatch
         ai._load_prompt("draft_entry.txt")
 
     ai._load_prompt.cache_clear()
+
+
+def test_draft_entry_flags_output_cut_off_by_token_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    _install_fake_client(monkeypatch, _fake_response("Half a sent", stop_reason="max_tokens"))
+
+    result = ai.draft_entry_with_ai("activity")
+
+    assert result.startswith("Half a sent")
+    assert "cut off" in result
+
+
+def test_draft_entry_does_not_flag_complete_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    _install_fake_client(monkeypatch, _fake_response("All done."))
+
+    assert ai.draft_entry_with_ai("activity") == "All done."

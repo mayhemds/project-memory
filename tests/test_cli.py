@@ -251,3 +251,92 @@ def test_missing_command_exits_nonzero() -> None:
         cli.main([])
 
     assert exc.value.code != 0
+
+
+def test_save_keeps_multiline_note_in_one_bullet(project_dir: Path) -> None:
+    _run(["init"])
+
+    assert _run(["save", "first line\n## Sneaky heading"]) == 0
+
+    text = state_file(project_dir).read_text(encoding="utf-8")
+    assert "- first line\n  ## Sneaky heading\n" in text
+
+
+def test_registry_timestamps_are_written_in_utc(project_dir: Path) -> None:
+    _run(["init"])
+
+    stored = json.loads(registry_file().read_text(encoding="utf-8"))
+
+    assert stored[0]["last_updated"].endswith("Z")
+
+
+def test_init_rolls_back_when_registry_cannot_be_updated(
+    project_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from project_memory.exceptions import StorageError
+
+    def fail(*args: object, **kwargs: object) -> None:
+        raise StorageError("disk full")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "upsert_project", fail)
+
+        assert _run(["init"]) == 1
+
+    assert "disk full" in capsys.readouterr().err
+    assert not (project_dir / ".memory").exists()
+    assert _run(["init"]) == 0
+
+
+def _write_foreign_entry(isolated_env: Path) -> Path:
+    shared = isolated_env / "shared.json"
+    shared.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "alice-app",
+                    "path": "/Users/alice/alice-app",
+                    "last_updated": "2999-01-01T00:00Z",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return shared
+
+
+def test_synced_foreign_projects_do_not_hijack_last(
+    project_dir: Path, isolated_env: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run(["init"])
+    _run(["sync", str(_write_foreign_entry(isolated_env))])
+    capsys.readouterr()
+
+    assert _run(["last"]) == 0
+    captured = capsys.readouterr()
+    assert "Most recent project: my-project" in captured.out
+    assert "alice-app" not in captured.out
+    assert "1 tracked project(s) not found on this machine" in captured.err
+
+
+def test_synced_foreign_projects_are_hidden_from_list_and_since(
+    project_dir: Path, isolated_env: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run(["init"])
+    _run(["sync", str(_write_foreign_entry(isolated_env))])
+    capsys.readouterr()
+
+    assert _run(["list"]) == 0
+    assert "alice-app" not in capsys.readouterr().out
+    assert _run(["last", "--since", "7d"]) == 0
+    assert "alice-app" not in capsys.readouterr().out
+
+
+def test_last_errors_when_nothing_tracked_exists_locally(
+    isolated_env: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run(["sync", str(_write_foreign_entry(isolated_env))])
+    capsys.readouterr()
+
+    assert _run(["last"]) == 1
+    assert "exist on this machine" in capsys.readouterr().err

@@ -70,21 +70,28 @@ mem init              # register the current directory as a tracked project
 mem save "fixed the auth bug"   # append a session entry
 mem save --ai         # draft an entry from recent git activity with Claude
 mem status            # show the current project's state file
-mem last              # show the most recently touched project
+mem last              # show the most recently touched project on this machine
 mem last --since 7d   # list every project touched in the last 7 days
-mem list              # list all tracked projects, most recent first
+mem list              # list tracked projects on this machine, most recent first
 mem search keyword    # grep every tracked project's state file
 mem sync <path>       # merge the local registry with a shared file (for teams)
 ```
 
+Multi-line notes are saved as a single bullet, with the extra lines indented
+under it, so a note can never add a stray heading to `STATE.md`. Inside a git
+repository, `--ai` summarises activity under the current project folder, so it
+also works for a project that lives in a subfolder of a monorepo.
+
 ### AI drafting
 
-`mem save --ai` reads `ANTHROPIC_API_KEY` from the environment (the SDK reads it
-directly; the key is never handled by this code). Optional overrides:
+`mem save --ai` needs `ANTHROPIC_API_KEY` in the environment. This code only checks
+that it is set; the SDK reads and uses the value itself, so the key is never
+stored or logged by `mem`. If a draft hits the token limit it is marked as cut
+off so you can raise `MEM_MAX_TOKENS` or edit it. Optional overrides:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `MEM_MODEL` | `claude-sonnet-5` | Claude model used for drafting |
+| `MEM_MODEL` | `claude-sonnet-5-5` | Claude model used for drafting |
 | `MEM_MAX_TOKENS` | `300` | Output cap per draft |
 | `MEM_TIMEOUT_SECONDS` | `60` | Request timeout |
 | `MEM_MAX_RETRIES` | `2` | SDK retry count |
@@ -99,9 +106,23 @@ drive, or a git-tracked path) and run `mem sync <path>`. The merge keeps the
 most recent entry per project and writes both copies back, so repeated runs from
 any machine converge on the same picture.
 
+Things to know:
+
+- Projects are matched by absolute path, so a teammate's entries point at paths
+  on their machine. `mem last` and `mem list` only show projects whose
+  `.memory/STATE.md` exists on your machine, and say how many they hid.
+- Registry timestamps are stored in UTC (a trailing `Z`) so entries from
+  different timezones compare correctly. Older local-time entries still load.
+  Timestamps inside `STATE.md` stay in your local time.
+- The shared file is locked while syncing, which protects syncs on one
+  filesystem. File-sync services (Dropbox, a shared drive) cannot lock across
+  machines, so two machines syncing at the same instant can overwrite each
+  other. The next sync repairs it.
+
 ## Development
 
 ```bash
+uv sync --extra dev        # install pytest, ruff, and mypy
 uv run pytest              # run the test suite
 uv run pytest --cov        # with coverage
 uv run ruff check .        # lint
@@ -115,13 +136,15 @@ uv run mypy .              # type check
   it into position, so a crash never leaves a truncated registry or state file.
 - **Advisory locking.** Registry and state-file mutations hold a lock for the
   whole read-modify-write cycle, so concurrent `mem` invocations cannot lose
-  each other's updates.
+  each other's updates. Locking uses `fcntl`, so it is POSIX only; on Windows
+  the lock does nothing and simultaneous `mem` runs can lose an update.
 - **Validated input.** The registry is user-editable JSON; every entry is
   validated with pydantic on load, and malformed data produces a clean error
   rather than a traceback.
 - **Untrusted git data.** Commit messages and file names are treated as data,
-  wrapped in explicit delimiters, and separated from the system prompt at the
-  message-role level before being sent to a model.
+  wrapped in explicit delimiters (any delimiter text inside them is neutralised),
+  and separated from the system prompt at the message-role level before being
+  sent to a model. You also confirm every draft before it is saved.
 
 ## License
 

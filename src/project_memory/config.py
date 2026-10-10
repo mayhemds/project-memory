@@ -17,7 +17,7 @@ from platformdirs import user_config_path
 
 from .exceptions import MemError
 
-DEFAULT_MODEL = "claude-sonnet-5"
+DEFAULT_MODEL = "claude-sonnet-5-5"
 DEFAULT_MAX_TOKENS = 300
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 60.0
 DEFAULT_MAX_RETRIES = 2

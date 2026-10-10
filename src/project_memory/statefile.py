@@ -8,6 +8,7 @@ which write atomically and preserve the file's frontmatter.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 from .exceptions import ProjectNotInitializedError, StateFileError
@@ -88,6 +89,18 @@ def initialize_project(project_root: Path, timestamp: str) -> Path:
     return path
 
 
+def remove_initial_state(project_root: Path) -> None:
+    """Undo :func:`initialize_project`, removing the state file and its folder.
+
+    Used to roll back a failed ``mem init`` so the project is not left half
+    initialized. The ``.memory`` folder is only removed when it is empty.
+    """
+    path = state_file(project_root)
+    path.unlink(missing_ok=True)
+    with contextlib.suppress(OSError):
+        path.parent.rmdir()
+
+
 def read_state(project_root: Path) -> str:
     """Return the raw text of a project's state file.
 
@@ -109,7 +122,7 @@ def _update_frontmatter_field(content: str, field_name: str, value: str) -> str:
     Raises:
         StateFileError: If the file has no frontmatter block or lacks the field.
     """
-    lines = content.splitlines()
+    lines = content.split("\n")
     if not lines or lines[0].strip() != "---":
         raise StateFileError("State file is missing its frontmatter block.")
     closing_index: int | None = None
@@ -121,12 +134,25 @@ def _update_frontmatter_field(content: str, field_name: str, value: str) -> str:
         raise StateFileError("State file's frontmatter block is not closed.")
     for index in range(1, closing_index):
         if lines[index].startswith(f"{field_name}:"):
-            lines[index] = f"{field_name}: {value}"
+            carriage_return = "\r" if lines[index].endswith("\r") else ""
+            lines[index] = f"{field_name}: {value}{carriage_return}"
             break
     else:
         raise StateFileError(f"Frontmatter field {field_name!r} not found in state file.")
-    trailing_newline = "\n" if content.endswith("\n") else ""
-    return "\n".join(lines) + trailing_newline
+    return "\n".join(lines)
+
+
+def format_entry_body(note: str) -> str:
+    """Render a note as one markdown list item, however many lines it has.
+
+    Continuation lines are indented under the bullet so they stay part of the
+    item, and a line such as ``## Heading`` cannot turn into a real heading
+    that breaks the file's section structure. Blank lines are dropped.
+    """
+    lines = [line.rstrip() for line in note.strip().splitlines() if line.strip()]
+    if not lines:
+        return "-"
+    return "\n".join([f"- {lines[0].strip()}", *(f"  {line.strip()}" for line in lines[1:])])
 
 
 def append_session_entry(project_root: Path, note: str, timestamp: str) -> Path:
@@ -156,8 +182,10 @@ def append_session_entry(project_root: Path, note: str, timestamp: str) -> Path:
     with file_lock(path):
         content = read_text(path)
         updated = _update_frontmatter_field(content, "last_updated", timestamp)
+        newline = "\r\n" if "\r\n" in content else "\n"
         if not updated.endswith("\n"):
-            updated += "\n"
-        updated += f"\n### {timestamp}\n- {note}\n"
+            updated += newline
+        addition = f"\n### {timestamp}\n{format_entry_body(note)}\n"
+        updated += addition.replace("\n", newline)
         atomic_write_text(path, updated)
     return path
