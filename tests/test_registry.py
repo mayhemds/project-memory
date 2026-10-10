@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import time
+from contextlib import AbstractContextManager
 from pathlib import Path
 
 import pytest
 
+from project_memory import storage
 from project_memory.config import registry_file
 from project_memory.exceptions import RegistryError
 from project_memory.models import Project
@@ -134,3 +137,42 @@ def test_sync_rejects_corrupt_shared_file(tmp_path: Path) -> None:
 
     with pytest.raises(RegistryError):
         sync_with_shared(shared)
+
+
+def test_merge_compares_instants_not_clock_strings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TZ", "Asia/Tokyo")
+    time.tzset()
+    try:
+        # Legacy local 12:00 in Tokyo is 03:00Z, so the 05:00Z entry is newer,
+        # even though "…T12:00" sorts after "…T05:00Z" as plain text.
+        legacy = Project(name="legacy", path="/p", last_updated="2026-01-01T12:00")
+        utc_entry = Project(name="utc", path="/p", last_updated="2026-01-01T05:00Z")
+
+        assert merge_projects([legacy], [utc_entry])[0].name == "utc"
+        assert merge_projects([utc_entry], [legacy])[0].name == "utc"
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+
+
+def test_merge_orders_mixed_utc_and_legacy_local_entries() -> None:
+    utc_entry = Project(name="utc", path="/p", last_updated="2999-01-01T00:00Z")
+    legacy_entry = Project(name="legacy", path="/p", last_updated="2000-01-01T00:00")
+
+    assert merge_projects([legacy_entry], [utc_entry])[0].name == "utc"
+
+
+def test_sync_locks_the_shared_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    locked: list[Path] = []
+    real_lock = storage.file_lock
+
+    def spy(path: Path) -> AbstractContextManager[None]:
+        locked.append(path)
+        return real_lock(path)
+
+    monkeypatch.setattr("project_memory.registry.file_lock", spy)
+    shared = tmp_path / "shared.json"
+
+    sync_with_shared(shared)
+
+    assert shared in locked

@@ -78,14 +78,15 @@ def upsert_project(name: str, path: Path, timestamp: str) -> None:
 def _wins_over(candidate: Project, current: Project) -> bool:
     """Return True when `candidate` should replace `current` during a merge.
 
-    Recency decides, and equal timestamps are broken by name so the result is
-    deterministic regardless of which side each entry came from. Without that
-    tie-break, two machines merging the same pair of registries with the
-    entries on opposite sides would converge to different results and thrash
-    on every sync.
+    Recency decides, compared as absolute instants so entries written in
+    different timezones order correctly. Equal instants are broken by name so
+    the result is deterministic regardless of which side each entry came from.
+    Without that tie-break, two machines merging the same pair of registries
+    with the entries on opposite sides would converge to different results and
+    thrash on every sync.
     """
-    if candidate.last_updated != current.last_updated:
-        return candidate.last_updated > current.last_updated
+    if candidate.updated_at != current.updated_at:
+        return candidate.updated_at > current.updated_at
     return candidate.name < current.name
 
 
@@ -126,7 +127,11 @@ def sync_with_shared(shared_path: Path) -> int:
     """Merge the local registry with a shared file and write both back.
 
     Both copies end up identical, so running sync repeatedly from any machine
-    converges everyone toward the same picture.
+    converges everyone toward the same picture. The shared file is locked as
+    well as the local registry, which serialises syncs that share a filesystem.
+    Sync services that copy files between machines offer no cross-machine
+    locking, so two machines syncing at the same moment can still race there;
+    the next sync repairs it because entries are merged by recency.
 
     Args:
         shared_path: Path to the shared registry JSON file.
@@ -140,7 +145,7 @@ def sync_with_shared(shared_path: Path) -> int:
     destination = registry_file()
     destination.parent.mkdir(parents=True, exist_ok=True)
     shared_path.parent.mkdir(parents=True, exist_ok=True)
-    with file_lock(destination):
+    with file_lock(destination), file_lock(shared_path):
         local_projects = load_registry()
         shared_projects = load_shared_registry(shared_path)
         merged = merge_projects(shared_projects, local_projects)

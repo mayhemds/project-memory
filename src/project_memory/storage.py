@@ -73,7 +73,7 @@ def atomic_write_text(path: Path, content: str) -> None:
         )
         temp_path = Path(temp_name)
         try:
-            with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
@@ -87,13 +87,14 @@ def atomic_write_text(path: Path, content: str) -> None:
 
 
 def read_text(path: Path) -> str:
-    """Read a UTF-8 text file.
+    """Read a UTF-8 text file, leaving line endings exactly as stored.
 
     Raises:
         StorageError: If the file cannot be read.
     """
     try:
-        return path.read_text(encoding="utf-8")
+        with path.open(encoding="utf-8", newline="") as stream:
+            return stream.read()
     except OSError as exc:
         raise StorageError(f"Could not read {path}: {exc}") from exc
 

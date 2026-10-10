@@ -9,7 +9,7 @@ CLI reports a clean message instead of a raw pydantic traceback.
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -17,7 +17,27 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from .exceptions import RegistryError
 
 TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M"
-_TIMESTAMP_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$")
+_TIMESTAMP_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z?$")
+
+
+def parse_timestamp(value: str) -> datetime:
+    """Parse a registry timestamp into a timezone-aware datetime.
+
+    A trailing ``Z`` means UTC, which is what current versions write so that
+    entries from machines in different timezones compare correctly. Timestamps
+    without it come from older registries and are interpreted as local time.
+
+    Raises:
+        ValueError: If `value` is not a valid ``YYYY-MM-DDTHH:MM[Z]`` timestamp.
+    """
+    if value.endswith("Z"):
+        return datetime.strptime(value[:-1], TIMESTAMP_FORMAT).replace(tzinfo=UTC)
+    return datetime.strptime(value, TIMESTAMP_FORMAT).astimezone()
+
+
+def utc_now_iso() -> str:
+    """Return the current time in UTC as ``YYYY-MM-DDTHH:MMZ``."""
+    return datetime.now(UTC).strftime(TIMESTAMP_FORMAT) + "Z"
 
 
 class Project(BaseModel):
@@ -36,14 +56,19 @@ class Project(BaseModel):
     @field_validator("last_updated")
     @classmethod
     def _validate_timestamp(cls, value: str) -> str:
-        """Reject timestamps that are not zero-padded ``YYYY-MM-DDTHH:MM``."""
+        """Reject timestamps that are not zero-padded ``YYYY-MM-DDTHH:MM[Z]``."""
         if not _TIMESTAMP_PATTERN.match(value):
             raise ValueError(f"must look like YYYY-MM-DDTHH:MM, got {value!r}")
         try:
-            datetime.strptime(value, TIMESTAMP_FORMAT)
+            parse_timestamp(value)
         except ValueError as exc:
             raise ValueError(f"is not a valid timestamp: {value!r}") from exc
         return value
+
+    @property
+    def updated_at(self) -> datetime:
+        """Return ``last_updated`` as a timezone-aware datetime."""
+        return parse_timestamp(self.last_updated)
 
     @property
     def resolved_path(self) -> Path:

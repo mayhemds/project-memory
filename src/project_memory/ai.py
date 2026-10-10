@@ -74,7 +74,8 @@ def draft_entry_with_ai(activity: str, *, settings: AISettings | None = None) ->
         import anthropic
     except ImportError as exc:
         raise AIError(
-            "The --ai flag needs the anthropic package. Install it with: uv add anthropic"
+            "The anthropic package is not installed. Reinstall project-memory "
+            "(for example with 'uv sync') to restore it."
         ) from exc
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -104,4 +105,7 @@ def draft_entry_with_ai(activity: str, *, settings: AISettings | None = None) ->
     text = "".join(text_blocks).strip()
     if not text:
         return "(no draft produced)"
-    return text[:_ENTRY_MAX_CHARS]
+    text = text[:_ENTRY_MAX_CHARS]
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        text += " [draft cut off at the token limit, raise MEM_MAX_TOKENS or edit it]"
+    return text
