@@ -8,6 +8,7 @@ covered alongside the logic.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -340,3 +341,67 @@ def test_last_errors_when_nothing_tracked_exists_locally(
 
     assert _run(["last"]) == 1
     assert "exist on this machine" in capsys.readouterr().err
+
+
+def test_init_warns_and_cancels_in_a_non_project_folder(
+    isolated_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    folder = isolated_env / "projects-folder"
+    folder.mkdir()
+    os.chdir(folder)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "n")
+
+    assert _run(["init"]) == 1
+
+    captured = capsys.readouterr()
+    assert "does not look like a project" in captured.err
+    assert "Nothing was created" in captured.err
+    assert not (folder / ".memory").exists()
+    assert not registry_file().exists()
+
+
+def test_init_proceeds_when_the_warning_is_confirmed(
+    isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = isolated_env / "scratch"
+    folder.mkdir()
+    os.chdir(folder)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "y")
+
+    assert _run(["init"]) == 0
+    assert (folder / ".memory" / "STATE.md").exists()
+
+
+def test_init_yes_flag_skips_the_warning(
+    isolated_env: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    folder = isolated_env / "scratch"
+    folder.mkdir()
+    os.chdir(folder)
+
+    assert _run(["init", "--yes"]) == 0
+    assert "Warning" not in capsys.readouterr().err
+
+
+def test_init_without_input_fails_instead_of_guessing(
+    isolated_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    folder = isolated_env / "scratch"
+    folder.mkdir()
+    os.chdir(folder)
+
+    def no_input(_prompt: str = "") -> str:
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", no_input)
+
+    assert _run(["init"]) == 1
+    assert "--yes" in capsys.readouterr().err
+    assert not (folder / ".memory").exists()
+
+
+def test_init_in_a_real_project_does_not_prompt(
+    project_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run(["init"]) == 0
+    assert "Warning" not in capsys.readouterr().err

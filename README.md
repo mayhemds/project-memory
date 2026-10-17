@@ -66,7 +66,7 @@ uv tool install .
 ## Usage
 
 ```bash
-mem init              # register the current directory as a tracked project
+mem init              # register the current directory as a tracked project (warns if it is not one)
 mem save "fixed the auth bug"   # append a session entry
 mem save --ai         # draft an entry from recent git activity with Claude
 mem status            # show the current project's state file
@@ -76,6 +76,20 @@ mem list              # list tracked projects on this machine, most recent first
 mem search keyword    # grep every tracked project's state file
 mem sync <path>       # merge the local registry with a shared file (for teams)
 ```
+
+### Where to run `mem init`
+
+Run `mem init` inside each individual project, not in a folder that holds many
+projects (for example `~/Projects` or `~/Projects/client-a`). Notes are found by
+looking upward for the nearest `.memory` folder, so a parent that is tracked
+would swallow the notes of any project beneath it that has not been initialised.
+`mem init` warns before creating anything when the folder has no project files
+(`.git`, `pyproject.toml`, `package.json` and similar), when it is your home or
+root folder, when it contains folders that look like projects, or when a parent
+is already tracked. Answer `n` to cancel, or pass `--yes` to skip the check.
+
+Install `mem` once from anywhere, such as `~/tools/project-memory`, with
+`uv tool install .`; the clone is only needed to update it later.
 
 Multi-line notes are saved as a single bullet, with the extra lines indented
 under it, so a note can never add a stray heading to `STATE.md`. Inside a git
