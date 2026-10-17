@@ -20,6 +20,7 @@ from .durations import parse_duration
 from .exceptions import MemError
 from .git_activity import collect_git_activity
 from .models import TIMESTAMP_FORMAT, Project, utc_now_iso
+from .project_check import init_warnings
 from .registry import load_registry, sync_with_shared, upsert_project
 from .statefile import (
     append_session_entry,
@@ -90,9 +91,32 @@ def _project_for_command() -> tuple[Path, Path]:
     return root, state_file(root)
 
 
-def cmd_init(_: argparse.Namespace) -> None:
-    """Create a ``.memory/STATE.md`` file in the current directory and register it."""
+def _confirm(prompt: str) -> bool:
+    """Ask a yes/no question, treating anything but ``y``/``yes`` as no.
+
+    Raises:
+        MemError: If no input is available (for example in a script), since a
+            silent default could create files in the wrong place.
+    """
+    try:
+        return input(prompt).strip().lower() in {"y", "yes"}
+    except (EOFError, OSError):
+        raise MemError("No input available to confirm. Pass --yes to skip the warning.") from None
+
+
+def cmd_init(args: argparse.Namespace) -> None:
+    """Create a ``.memory/STATE.md`` file in the current directory and register it.
+
+    Warns first if the folder does not look like a single project, and asks for
+    confirmation unless ``--yes`` was passed.
+    """
     root = Path.cwd()
+    warnings = init_warnings(root)
+    if warnings and not args.yes:
+        for warning in warnings:
+            print(f"Warning: {warning}", file=sys.stderr)
+        if not _confirm("Initialize here anyway? [y/N]: "):
+            raise MemError("Cancelled. Nothing was created.")
     timestamp = _now_iso()
     path = initialize_project(root, timestamp)
     try:
@@ -268,9 +292,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mem", description="Cross-project session memory.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser(
+    init_parser = subparsers.add_parser(
         "init", help="Register the current directory as a tracked project."
-    ).set_defaults(func=cmd_init)
+    )
+    init_parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Skip the warning if this does not look like a project.",
+    )
+    init_parser.set_defaults(func=cmd_init)
 
     save_parser = subparsers.add_parser("save", help="Record a session entry.")
     save_parser.add_argument("note", nargs="?", default=None, help="The note to save.")

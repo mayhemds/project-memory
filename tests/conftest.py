@@ -39,8 +39,9 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Pa
 
 @pytest.fixture
 def project_dir(isolated_env: Path) -> Path:
-    """Create an empty candidate project directory and chdir into it."""
+    """Create a candidate project directory (with a marker file) and chdir into it."""
     directory = isolated_env / "my-project"
     directory.mkdir()
+    (directory / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
     os.chdir(directory)
     return directory
